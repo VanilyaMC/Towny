@@ -536,6 +536,7 @@ msg_err_town_spawn_disallowed_from: '<red>%s den kasaba doğmasına izin verilmi
 msg_err_outpost_spawn: '<red>Bu kasaba için belirlenmiş bir karakol spawn yeri yok.'
 msg_err_cant_afford_tp: '<aqua>Kasabanızın spawnına ışınlanmayı göze alamazsınız.'
 msg_err_plot_nfs: '<red>Bu arsa satılık değil.'
+msg_err_plot_price_changed: '<red>Bu arsanın fiyatı onayından sonra değişti. Hiçbir şey alınmadı, yeni fiyata bak ve tekrar dene.'
 msg_err_not_part_town: '<red>Seçili bölge şehrinizin bir parçası değil.'
 msg_err_not_attached_edge: '<red>Seçili alan kenara eklenmemiş.'
 msg_err_empty_area_selection: '<red>Almak istediğiniz arazi diğer arsalarınız ile çapraz! Lütfen yan yana olan arazileri almaya çalışın.'

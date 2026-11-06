@@ -83,8 +83,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -2223,6 +2225,8 @@ public class PlotCommand extends BaseCommand implements CommandExecutor {
 	
 	private void continuePlotClaimProcess(List<WorldCoord> selection, Resident resident, Player player) throws TownyException {
 		double cost = 0;
+		// The price of each plot as it is shown in the confirmation.
+		Map<WorldCoord, Double> confirmedPrices = new HashMap<>();
 
 		// Remove any plots Not for sale (if not the mayor) and
 		// tally up costs.
@@ -2246,15 +2250,20 @@ public class PlotCommand extends BaseCommand implements CommandExecutor {
 
 					tb.testTownMembershipAgePreventsThisClaimOrThrow(resident);
 
+					// The group price shown below is the price the claim must still have when it runs.
+					final double confirmedGroupPrice = group.getPrice();
+
 					// Add the confirmation for claiming a plot group.
 					Confirmation.runOnAccept(() -> {
 						ArrayList<WorldCoord> coords = new ArrayList<>();
 
 						// Get worldcoords from plot group.
 						group.getTownBlocks().forEach((tblock) -> coords.add(tblock.getWorldCoord()));
+						if (coords.isEmpty())
+							return;
 
 						// Execute the plot claim.
-						plugin.getScheduler().runAsync(new PlotClaim(plugin, player, resident, coords, true, false, true));
+						plugin.getScheduler().runAsync(new PlotClaim(plugin, player, resident, coords, true, false, true, Map.of(coords.get(0), confirmedGroupPrice)));
 					})
 					.setTitle(Translatable.of("msg_plot_group_claim_confirmation", group.getTownBlocks().size()).append(" ").append(prettyMoney(group.getPrice())).append(". ").append(Translatable.of("are_you_sure_you_want_to_continue")))
 					.sendTo(player);
@@ -2263,12 +2272,12 @@ public class PlotCommand extends BaseCommand implements CommandExecutor {
 				}
 				
 				// Check if a plot has a price.
-				if (price > -1)
-					cost += tb.getPlotPrice();
-				else {
-					if (!tb.getTownOrNull().isMayor(resident)) 
-						selection.remove(worldCoord);
+				if (price > -1) {
+					cost += price;
+					confirmedPrices.put(worldCoord, price);
 				}
+				else if (!tb.getTownOrNull().isMayor(resident))
+					selection.remove(worldCoord);
 			}
 		}
 
@@ -2289,13 +2298,13 @@ public class PlotCommand extends BaseCommand implements CommandExecutor {
 		if (cost != 0) {
 			Confirmation.runOnAcceptAsync(
 				// Start the claim task
-				new PlotClaim(plugin, player, resident, selection, true, false, false)
+				new PlotClaim(plugin, player, resident, selection, true, false, false, confirmedPrices)
 			)
 			.setTitle(Translatable.of("msg_confirm_purchase", prettyMoney(cost)))
 			.sendTo(player);
 		} else {
 			// Start the claim task
-			plugin.getScheduler().runAsync(new PlotClaim(plugin, player, resident, selection, true, false, false));
+			plugin.getScheduler().runAsync(new PlotClaim(plugin, player, resident, selection, true, false, false, confirmedPrices));
 		}
 	}
 		
