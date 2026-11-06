@@ -20,6 +20,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +36,9 @@ public class PlotClaim implements Runnable {
 	private final boolean claim;
 	private final boolean admin;
 	private final boolean groupClaim;
+	/** Prices the player saw and confirmed, by plot; null when no price was shown. */
+	@Nullable
+	private final Map<WorldCoord, Double> confirmedPrices;
 
 	/**
 	 * @param plugin reference to towny
@@ -46,6 +50,15 @@ public class PlotClaim implements Runnable {
 	 * @param groupClaim Indicates whether the claim is part of a plot group claim.
 	 */
 	public PlotClaim(Towny plugin, Player player, Resident resident, List<WorldCoord> selection, boolean claim, boolean admin, boolean groupClaim) {
+		this(plugin, player, resident, selection, claim, admin, groupClaim, null);
+	}
+
+	/**
+	 * @param confirmedPrices the price of each plot as shown to the player when they confirmed the purchase. A
+	 *                        plot whose price is different when the purchase runs is not bought. For a group
+	 *                        claim, the group price is stored under the first coord of the selection.
+	 */
+	public PlotClaim(Towny plugin, Player player, Resident resident, List<WorldCoord> selection, boolean claim, boolean admin, boolean groupClaim, @Nullable Map<WorldCoord, Double> confirmedPrices) {
 
 		super();
 		this.plugin = plugin;
@@ -55,6 +68,15 @@ public class PlotClaim implements Runnable {
 		this.claim = claim;
 		this.admin = admin;
 		this.groupClaim = groupClaim;
+		this.confirmedPrices = confirmedPrices == null ? null : Map.copyOf(confirmedPrices);
+	}
+
+	private void throwIfPriceChanged(WorldCoord worldCoord, double price) throws TownyException {
+		if (confirmedPrices == null)
+			return;
+		Double confirmed = confirmedPrices.get(worldCoord);
+		if (confirmed != null && Double.compare(confirmed, price) != 0)
+			throw new TownyException(Translatable.of("msg_err_plot_price_changed"));
 	}
 
 	@Override
@@ -99,7 +121,20 @@ public class PlotClaim implements Runnable {
 			return;
 
 		final PlotGroup group = townBlock.getPlotObjectGroup();
+		// One buyer at a time: the sale check, the payment and the change of owner happen together.
+		synchronized (group) {
+			handleGroupClaim(worldCoord, townBlock, group);
+		}
+	}
+
+	private void handleGroupClaim(WorldCoord worldCoord, TownBlock townBlock, PlotGroup group) {
 		try {
+
+			/*
+			 * The group may have been sold or taken off sale since the player confirmed.
+			 */
+			if (!group.isForSale())
+				throw new TownyException(Translatable.of("msg_err_plot_nfs"));
 
 			/*
 			 * Test that they can actually own that many townblocks.
@@ -110,6 +145,7 @@ public class PlotClaim implements Runnable {
 			 * Handle paying for the plot here so it is not paid for per-townblock in the group.
 			 */
 			double groupPrice = group.getPrice();
+			throwIfPriceChanged(worldCoord, groupPrice);
 			if (TownyEconomyHandler.isActive() && groupPrice > 0) {
 				EconomyHandler seller = group.hasResident() ? group.getResident() : group.getTown();
 				String message = String.format("Plot Group - Buy From %s: %s", (group.hasResident() ? "Seller" : "Town"), seller.getName());
@@ -174,6 +210,14 @@ public class PlotClaim implements Runnable {
 		if (townBlock == null)
 			throw new TownyException(Translatable.of("msg_err_not_part_town"));
 
+		// One buyer at a time: the sale check, the payment and the change of owner happen together.
+		synchronized (townBlock) {
+			return residentClaim(worldCoord, townBlock);
+		}
+	}
+
+	private boolean residentClaim(WorldCoord worldCoord, TownBlock townBlock) throws TownyException {
+
 		if (townBlock.getPlotPrice() == -1)
 			throw new TownyException(Translatable.of("msg_err_plot_nfs"));
 
@@ -187,6 +231,7 @@ public class PlotClaim implements Runnable {
 		 * Handle paying for the plot here.
 		 */
 		double price = townBlock.getPlotPrice();
+		throwIfPriceChanged(worldCoord, price);
 		if (TownyEconomyHandler.isActive() && price > 0) {
 			EconomyHandler seller = townBlock.hasResident() ? townBlock.getResidentOrNull() : townBlock.getTownOrNull();
 			String message = String.format("Plot - Buy From %s: %s", (townBlock.hasResident() ? "Seller" : "Town"), seller.getName());
