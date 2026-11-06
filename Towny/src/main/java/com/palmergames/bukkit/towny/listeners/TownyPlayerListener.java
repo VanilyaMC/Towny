@@ -48,6 +48,7 @@ import com.palmergames.bukkit.util.ChatTools;
 import com.palmergames.bukkit.util.EntityLists;
 import com.palmergames.bukkit.util.ItemLists;
 
+import io.papermc.paper.event.player.AbstractRespawnEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 
@@ -105,6 +106,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Handle events for all Player related events
@@ -219,6 +221,18 @@ public class TownyPlayerListener implements Listener {
 	
 	@EventHandler(priority = EventPriority.NORMAL)
 	public void onPlayerRespawn(PlayerRespawnEvent event) {
+		handleTownRespawn(event, event::setRespawnLocation);
+	}
+
+	/**
+	 * Sends a respawning player to their town spawn (or bed) when town respawning is on.
+	 * Shared by {@link PlayerRespawnEvent} and Canvas' async respawn event, which do not share a setter.
+	 *
+	 * @param event the respawn event
+	 * @param setRespawnLocation sets the respawn location on that event
+	 */
+	@ApiStatus.Internal
+	public void handleTownRespawn(AbstractRespawnEvent event, Consumer<Location> setRespawnLocation) {
 		if (plugin.isError() || event.getRespawnReason() == PlayerRespawnEvent.RespawnReason.END_PORTAL || !TownySettings.isTownRespawning()) {
 			return;
 		}
@@ -248,7 +262,7 @@ public class TownyPlayerListener implements Listener {
 		if (TownySettings.isTownRespawningInOtherWorlds() && !player.getWorld().equals(respawn.getWorld()))
 			return;
 		
-		event.setRespawnLocation(respawn);
+		setRespawnLocation.accept(respawn);
 		
 		// Handle Spawn protection
 		long protectionTime = TownySettings.getSpawnProtectionDuration();
@@ -258,6 +272,17 @@ public class TownyPlayerListener implements Listener {
 	
 	@EventHandler(priority = EventPriority.HIGHEST)
 	public void onPlayerJailRespawn(PlayerRespawnEvent event) {
+		handleJailRespawn(event, event::setRespawnLocation);
+	}
+
+	/**
+	 * Sends a respawning jailed player to their jail spawn.
+	 *
+	 * @param event the respawn event
+	 * @param setRespawnLocation sets the respawn location on that event
+	 */
+	@ApiStatus.Internal
+	public void handleJailRespawn(AbstractRespawnEvent event, Consumer<Location> setRespawnLocation) {
 
 		if (plugin.isError()) {
 			return;
@@ -267,7 +292,7 @@ public class TownyPlayerListener implements Listener {
 
 		// If player is jailed send them to their jailspawn.
 		if (resident != null && resident.isJailed() && resident.getJailSpawn().isWorldLoaded())
-			event.setRespawnLocation(resident.getJailSpawn());
+			setRespawnLocation.accept(resident.getJailSpawn());
 
 	}
 	

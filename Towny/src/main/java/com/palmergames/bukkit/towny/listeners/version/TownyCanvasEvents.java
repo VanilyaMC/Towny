@@ -3,6 +3,7 @@ package com.palmergames.bukkit.towny.listeners.version;
 import com.palmergames.bukkit.towny.Towny;
 import com.palmergames.bukkit.towny.listeners.TownyPlayerListener;
 import com.palmergames.util.JavaUtil;
+import io.papermc.paper.event.player.AbstractRespawnEvent;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
@@ -22,6 +23,12 @@ public class TownyCanvasEvents implements VersionDependentListener {
     private static final MethodHandle ASYNC_TELEPORT_EVENT_TO = JavaUtil.getMethodHandle(ASYNC_TELEPORT_EVENT, "getTo");
     private static final MethodHandle ASYNC_TELEPORT_EVENT_CAUSE = JavaUtil.getMethodHandle(ASYNC_TELEPORT_EVENT, "getCause");
 
+    // Canvas respawns players without firing PlayerRespawnEvent (only END_PORTAL exits still fire it),
+    // so town and jail respawns have to be applied on its async respawn event as well.
+    static final String ASYNC_RESPAWN_EVENT = "io.canvasmc.canvas.event.PlayerRespawnAsyncEvent";
+
+    private static final MethodHandle ASYNC_RESPAWN_EVENT_SET_LOCATION = setRespawnLocationHandle(ASYNC_RESPAWN_EVENT);
+
     private final Towny plugin;
     private final TownyPlayerListener townyPlayerListener;
 
@@ -33,6 +40,43 @@ public class TownyCanvasEvents implements VersionDependentListener {
     @Override
     public void register() {
         registerEvent(ASYNC_TELEPORT_EVENT, this::asyncTeleportEventListener, EventPriority.NORMAL, true);
+
+        if (ASYNC_RESPAWN_EVENT_SET_LOCATION != null) {
+            // Same priorities as the PlayerRespawnEvent handlers, so a jail spawn still wins over a town spawn.
+            registerEvent(ASYNC_RESPAWN_EVENT, () -> asyncRespawnEventListener(townyPlayerListener::handleTownRespawn), EventPriority.NORMAL, false);
+            registerEvent(ASYNC_RESPAWN_EVENT, () -> asyncRespawnEventListener(townyPlayerListener::handleJailRespawn), EventPriority.HIGHEST, false);
+        }
+    }
+
+    @FunctionalInterface
+    interface RespawnHandler {
+        void handle(AbstractRespawnEvent event, Consumer<Location> setRespawnLocation);
+    }
+
+    private Consumer<AbstractRespawnEvent> asyncRespawnEventListener(RespawnHandler handler) {
+        return event -> handler.handle(event, respawnLocationSetter(event, ASYNC_RESPAWN_EVENT_SET_LOCATION, failure ->
+            plugin.getLogger().log(Level.WARNING, "An exception occurred while invoking " + ASYNC_RESPAWN_EVENT + "#setRespawnLocation reflectively", failure)));
+    }
+
+    /**
+     * @return a setter that writes the respawn location through the given handle and reports a failure instead of throwing.
+     */
+    static Consumer<Location> respawnLocationSetter(AbstractRespawnEvent event, MethodHandle setRespawnLocation, Consumer<Throwable> onFailure) {
+        return location -> {
+            try {
+                setRespawnLocation.invoke(event, location);
+            } catch (final Throwable e) {
+                onFailure.accept(e);
+            }
+        };
+    }
+
+    static MethodHandle setRespawnLocationHandle(String className) {
+        try {
+            return JavaUtil.getMethodHandle(Class.forName(className), "setRespawnLocation", Location.class);
+        } catch (ClassNotFoundException notCanvas) {
+            return null;
+        }
     }
 
     private Consumer<EntityEvent> asyncTeleportEventListener() {
