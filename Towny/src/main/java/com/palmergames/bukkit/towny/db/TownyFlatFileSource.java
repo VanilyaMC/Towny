@@ -42,7 +42,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -860,7 +859,8 @@ public final class TownyFlatFileSource extends TownyDatabaseHandler {
 		
 		this.queryQueue.add(() -> {
 			try {
-				Files.writeString(Paths.get(dataFolderPath).resolve("cooldowns.json"), new GsonBuilder().setPrettyPrinting().create().toJson(object), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+				final String json = new GsonBuilder().setPrettyPrinting().create().toJson(object);
+				FileMgmt.writeAtomically(Paths.get(dataFolderPath).resolve("cooldowns.json"), temp -> Files.writeString(temp, json));
 			} catch (IOException e) {
 				plugin.getLogger().log(Level.WARNING, "An exception occurred when writing cooldowns.json", e);
 			}

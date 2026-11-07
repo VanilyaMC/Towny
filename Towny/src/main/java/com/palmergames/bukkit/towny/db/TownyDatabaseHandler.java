@@ -136,8 +136,7 @@ public abstract class TownyDatabaseHandler extends TownyDataSource {
 		task = plugin.getScheduler().runAsyncRepeating(() -> {
 			synchronized(queryQueue) {
 				while (!this.queryQueue.isEmpty()) {
-					Runnable operation = this.queryQueue.poll();
-					operation.run();
+					runQueued(this.queryQueue.poll());
 				}
 			}
 		}, 5L, 5L);
@@ -153,9 +152,21 @@ public abstract class TownyDatabaseHandler extends TownyDataSource {
 
 			// Make sure that *all* tasks are saved before shutting down.
 			while (!this.queryQueue.isEmpty()) {
-				Runnable operation = this.queryQueue.poll();
-				operation.run();
+				runQueued(this.queryQueue.poll());
 			}
+		}
+	}
+
+	/**
+	 * One failing save (a bad value, a full disk for one file) must not stop the saves queued after it.
+	 */
+	private void runQueued(Runnable operation) {
+		if (operation == null)
+			return;
+		try {
+			operation.run();
+		} catch (RuntimeException e) {
+			plugin.getLogger().log(Level.SEVERE, "A queued database operation failed; continuing with the rest of the queue.", e);
 		}
 	}
 	

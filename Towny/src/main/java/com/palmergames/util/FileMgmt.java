@@ -1,5 +1,7 @@
 package com.palmergames.util;
 
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 import com.palmergames.bukkit.towny.Towny;
 import com.palmergames.bukkit.towny.db.TownyDatabaseHandler;
 import com.palmergames.bukkit.towny.regen.PlotBlockData;
@@ -161,15 +163,48 @@ public final class FileMgmt {
 	public static void mapToFile(Map<String, Object> source, Path targetLocation) throws IOException {
 		try {
 			writeLock.lock();
-			try (BufferedWriter writer = Files.newBufferedWriter(targetLocation)) {
-				for (Map.Entry<String, Object> entry : source.entrySet()) {
-					writer.write(entry.getKey() + "=" + entry.getValue());
-					writer.newLine();
+			writeAtomically(targetLocation, temp -> {
+				try (BufferedWriter writer = Files.newBufferedWriter(temp)) {
+					for (Map.Entry<String, Object> entry : source.entrySet()) {
+						writer.write(entry.getKey() + "=" + entry.getValue());
+						writer.newLine();
+					}
 				}
-			}
+			});
 		} finally {
 			writeLock.unlock();
 		}
+	}
+
+	/**
+	 * Writes a file so that a crash never leaves it truncated or half written.
+	 * The content goes to a temporary file next to the target, which then replaces the target in one rename.
+	 * After a process crash the target holds either the old or the new content, never a mix.
+	 * The temporary name ends in {@code .tmp}, so the flatfile loaders (which filter on {@code .txt} and
+	 * {@code .data}) never read a leftover.
+	 *
+	 * @param target file to write
+	 * @param writer writes the full content to the temporary path it is given
+	 * @throws IOException if writing or the rename fails; the target is then left as it was
+	 */
+	public static void writeAtomically(Path target, PathWriter writer) throws IOException {
+		Path temp = target.resolveSibling(target.getFileName() + ".tmp");
+		try {
+			writer.write(temp);
+			try {
+				Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			} catch (AtomicMoveNotSupportedException e) {
+				Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+		} catch (IOException | RuntimeException e) {
+			Files.deleteIfExists(temp);
+			throw e;
+		}
+	}
+
+	@FunctionalInterface
+	public interface PathWriter {
+		void write(Path temp) throws IOException;
 	}
 
 	/**
@@ -183,7 +218,7 @@ public final class FileMgmt {
 		try {
 			writeLock.lock();
 			try {
-				Files.write(Path.of(targetLocation), source);
+				writeAtomically(Path.of(targetLocation), temp -> Files.write(temp, source));
 				return true;
 			} catch (IOException e) {
 				Towny.getPlugin().getLogger().log(Level.WARNING, "An exception occurred while writing to " + targetLocation, e);
@@ -458,9 +493,19 @@ public final class FileMgmt {
 	 */
 	public static void savePlotData(PlotBlockData data, File file, String path) {
 		checkOrCreateFolder(file.getPath()); // Make the folder if it doesn't exist.
-		try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(path), StandardCharsets.UTF_8)) {
-			writeLock.lock();
-			output.putNextEntry(new ZipEntry(data.getX() + "_" + data.getZ() + "_" + data.getSize() + ".data")); // Create x_z_size.data file inside of .zip
+		writeLock.lock();
+		try {
+			writeAtomically(Path.of(path), temp -> writePlotData(data, temp));
+		} catch (IOException e1) {
+			Towny.getPlugin().getLogger().log(Level.WARNING, "An exception occurred while saving plot data to " + file.getName(), e1);
+		} finally {
+			writeLock.unlock();
+		}
+	}
+
+	private static void writePlotData(PlotBlockData data, Path temp) throws IOException {
+		try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(temp), StandardCharsets.UTF_8)) {
+			output.putNextEntry(new ZipEntry(data.getX() + "_" + data.getZ() + "_" + data.getSize() + ".data")); // Place file into zip.
 			try (DataOutputStream fout = new DataOutputStream(output)) {
 				// Data version goes first.
 				fout.write("VER".getBytes(StandardCharsets.UTF_8));
@@ -473,10 +518,6 @@ public final class FileMgmt {
 				for (String block : new ArrayList<>(data.getBlockList()))
 					fout.writeUTF(block);
 			}
-		} catch (IOException e1) {
-			Towny.getPlugin().getLogger().log(Level.WARNING, "An exception occurred while saving plot data to " + file.getName(), e1);
-		} finally {
-			writeLock.unlock();
 		}
 	}
 
