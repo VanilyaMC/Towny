@@ -301,8 +301,8 @@ public class DailyTimerTask extends TownyTimerTask {
 			return "";
 
 		// Town is able to pay the nation's tax.
-		if (town.getAccount().canPayFromHoldings(taxAmount)) {
-			town.getAccount().payTo(taxAmount, nation, String.format("Nation Tax to %s paid by %s.", nation.getName(), town.getName()));
+		if (town.getAccount().canPayFromHoldings(taxAmount)
+				&& town.getAccount().payTo(taxAmount, nation, String.format("Nation Tax to %s paid by %s.", nation.getName(), town.getName()))) {
 			TownyMessaging.sendPrefixedTownMessage(town, Translatable.of("msg_payed_nation_tax", prettyMoney(taxAmount)));
 			taxCollected += taxAmount;
 			if (localConqueredTax > 0)
@@ -345,8 +345,15 @@ public class DailyTimerTask extends TownyTimerTask {
 		}
 
 		// Pay the nation tax with at least some amount of debt.
-		town.getAccount().withdraw(taxAmount, String.format("Nation Tax paid to %s.", nation.getName())); // .withdraw() is used because other economy methods do not allow a town to go into debt.
-		nation.getAccount().deposit(taxAmount, String.format("Nation Tax paid by %s.", town.getName()));
+		// .withdraw() is used because other economy methods do not allow a town to go into debt.
+		// The nation is paid only out of money really taken from the town.
+		if (!town.getAccount().withdraw(taxAmount, String.format("Nation Tax paid to %s.", nation.getName()))) {
+			town.removeNation();
+			TownyMessaging.sendPrefixedTownMessage(town, Translatable.of("msg_your_town_couldnt_pay_the_nation_tax_of", prettyMoney(taxAmount)));
+			return "delinquent";
+		}
+		if (!nation.getAccount().deposit(taxAmount, String.format("Nation Tax paid by %s.", town.getName())))
+			plugin.getLogger().warning("Nation tax of " + taxAmount + " taken from " + town.getName() + " could not be deposited to " + nation.getName() + ".");
 		TownyMessaging.sendPrefixedTownMessage(town, Translatable.of("msg_payed_nation_tax_with_debt", prettyMoney(taxAmount)));
 		taxCollected += taxAmount;
 		if (localConqueredTax > 0)

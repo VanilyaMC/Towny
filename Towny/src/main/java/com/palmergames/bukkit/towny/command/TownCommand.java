@@ -3814,9 +3814,16 @@ public class TownCommand extends BaseCommand implements CommandExecutor {
 				throw new TownyException(Translatable.of("msg_no_funds_claim2", selectionSize, prettyMoney(blockCost), prettyMoney(missingAmount), new DecimalFormat("#").format(missingAmount)));
 			}
 
-			// Charge the town for the claim.
-			TownyEconomyHandler.economyExecutor().execute(() ->
-				town.getAccount().withdraw(blockCost, String.format("Town Claim (%d) by %s", selectionSize, player.getName())));
+			// Charge the town for the claim now, and refuse the claim when the money was not really taken.
+			// The old code withdrew later on the economy executor and ignored the result, so a town emptied
+			// in between (a parallel /t withdraw) still got the land.
+			synchronized (townAccount) {
+				if (!townAccount.canPayFromHoldings(blockCost)
+						|| !townAccount.withdraw(blockCost, String.format("Town Claim (%d) by %s", selectionSize, player.getName()))) {
+					double missingAmount = blockCost - townAccount.getHoldingBalance();
+					throw new TownyException(Translatable.of("msg_no_funds_claim2", selectionSize, prettyMoney(blockCost), prettyMoney(missingAmount), new DecimalFormat("#").format(missingAmount)));
+				}
+			}
 		}
 	}
 
@@ -4653,10 +4660,20 @@ public class TownCommand extends BaseCommand implements CommandExecutor {
 			throw new TownyException(Translatable.of("msg_mayor_abandon"));
 		}
 
+		// The price shown in the confirmation is the price that is charged and paid out.
+		final double confirmedPrice = town.getForSalePrice();
+
 		Confirmation
 			.runOnAccept(() -> {
+			// One buyer at a time per town: the sale check, the payment and the change of mayor stay together.
+			synchronized (town) {
 				if (!town.isForSale()) {
 					TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_town_buytown_not_forsale"));
+					return;
+				}
+
+				if (town.getForSalePrice() != confirmedPrice) {
+					TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_err_town_price_changed"));
 					return;
 				}
 
@@ -4671,8 +4688,8 @@ public class TownCommand extends BaseCommand implements CommandExecutor {
 					return;
 				}
 				
-				if (!resident.getAccount().withdraw(town.getForSalePrice(), "Town purchase cost.")) {
-					TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_err_you_need_x_to_pay", town.getForSalePrice()));
+				if (!resident.getAccount().withdraw(confirmedPrice, "Town purchase cost.")) {
+					TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_err_you_need_x_to_pay", confirmedPrice));
 					return;
 				}
 				
@@ -4688,13 +4705,14 @@ public class TownCommand extends BaseCommand implements CommandExecutor {
 
 				TownyMessaging.sendPrefixedTownMessage(town, Translatable.of("msg_new_mayor", resident.getName()));
 
-				if (currentMayor != null)
-					currentMayor.getAccount().deposit(town.getForSalePrice(), "Payment for town sale");
-
 				town.setForSale(false);
 				town.save();
+
+				if (currentMayor != null && !currentMayor.getAccount().deposit(confirmedPrice, "Payment for town sale"))
+					Towny.getPlugin().getLogger().warning("Town sale payment of " + confirmedPrice + " for " + town.getName() + " could not be deposited to " + currentMayor.getName() + ".");
+			}
 			})
-		.setTitle(Translatable.of("msg_town_buytown_confirmation", town.getName(), prettyMoney(town.getForSalePrice())))
+		.setTitle(Translatable.of("msg_town_buytown_confirmation", town.getName(), prettyMoney(confirmedPrice)))
 		.setCancellableEvent(new TownPreAddResidentEvent(town, resident))
 		.sendTo(player);
 	}

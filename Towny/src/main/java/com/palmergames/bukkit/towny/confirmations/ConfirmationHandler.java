@@ -144,12 +144,16 @@ public class ConfirmationHandler {
 			Account payee = transaction.getPayee();
 			// Can they pay the cost?
 			if (cost > 0 && payee != null) {
-				if (!payee.canPayFromHoldings(cost)) {
-					TownyMessaging.sendErrorMsg(sender, transaction.getInsufficientFundsMessage());
-					TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_err_you_need_x_to_pay", cost));
-					return;
+				// Check and withdraw under the account's monitor, and run the action only when the
+				// withdrawal really happened. A parallel withdrawal from another region thread could
+				// otherwise empty the account between the check and the withdrawal: a free action.
+				synchronized (payee) {
+					if (!payee.canPayFromHoldings(cost) || !payee.withdraw(cost, transaction.getLoggedMessage())) {
+						TownyMessaging.sendErrorMsg(sender, transaction.getInsufficientFundsMessage());
+						TownyMessaging.sendErrorMsg(sender, Translatable.of("msg_err_you_need_x_to_pay", cost));
+						return;
+					}
 				}
-				payee.withdraw(cost, transaction.getLoggedMessage());
 			}
 		} else {
 			paidCost = 0;

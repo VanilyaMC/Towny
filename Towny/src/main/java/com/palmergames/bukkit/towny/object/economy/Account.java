@@ -162,10 +162,19 @@ public abstract class Account implements Nameable, Identifiable {
 			return false;
 		}
 
-		boolean success = withdraw(amount, reason) && collector.deposit(amount, reason);
-		if (success)
-			BukkitTools.fireEvent(Transaction.add(amount).paidBy(this).paidTo(collector).asTownyTransactionEvent());
-		return success;
+		if (!withdraw(amount, reason))
+			return false;
+
+		if (!collector.deposit(amount, reason)) {
+			// The receiver refused the money (bank cap, balance cap, economy error). Give it back instead of
+			// letting it vanish; the old code returned false with the payer already charged.
+			if (!deposit(amount, reason + " (refund: receiver refused the payment)"))
+				Towny.getPlugin().getLogger().log(Level.WARNING, String.format("Payment of %s from %s to %s failed and could not be refunded.", amount, getName(), collector.getName()));
+			return false;
+		}
+
+		BukkitTools.fireEvent(Transaction.add(amount).paidBy(this).paidTo(collector).asTownyTransactionEvent());
+		return true;
 	}
 
 	@NotNull
