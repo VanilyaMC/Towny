@@ -804,16 +804,25 @@ public class TownyPlayerListener implements Listener {
 
 	@EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
 	public void onPlayerMove(PlayerMoveEvent event) {
+		// Most move events (head turns, steps inside one block) change nothing Towny cares about.
+		// Leave before the NPC check: hasMetadata builds a string key on every call, and this event
+		// fires for every movement packet of every player.
+		final Location from = event.getFrom();
+		final Location to = event.getTo();
+		if (from.getBlockX() == to.getBlockX() && from.getBlockZ() == to.getBlockZ() && from.getBlockY() == to.getBlockY())
+			return;
+
 		// Let's ignore Citizens NPCs
 		if (PluginIntegrations.getInstance().isNPC(event.getPlayer()))
 			return;
-		
+
+		// Safe mode: block moves to another block (a move inside one block is harmless).
 		if (plugin.isError()) {
 			event.setCancelled(true);
 			return;
 		}
 
-		handleCellChange(event.getPlayer(), event.getFrom(), event.getTo());
+		handleCellChange(event.getPlayer(), from, to);
 	}
 
 	/**
